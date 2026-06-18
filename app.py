@@ -13,22 +13,17 @@ db.init_app(app)
 
 @app.route("/taxis", methods=["GET"])
 def get_taxis():
-    # Parámetros de paginación y filtro
     page = request.args.get("page", default=1, type=int)
     limit = request.args.get("limit", default=10, type=int)
     plate = request.args.get("plate", default=None, type=str)
 
-    # Consulta base
     query = Taxi.query
 
-    # Filtro opcional por placa
     if plate:
         query = query.filter(Taxi.plate.ilike(f"%{plate}%"))
 
-    # Paginación
     pagination = query.paginate(page=page, per_page=limit, error_out=False)
 
-    # Armar la respuesta
     taxis = [{"id": t.id, "plate": t.plate} for t in pagination.items]
 
     return jsonify(taxis)
@@ -38,24 +33,21 @@ def get_trajectories():
     taxi_id = request.args.get("taxiId", default=None, type=int)
     date = request.args.get("date", default=None, type=str)
 
-    # Validación: ambos parámetros son obligatorios → 400 si falta alguno
     if taxi_id is None:
         return jsonify({"error": "El parametro taxiId es requerido"}), 400
     if date is None:
         return jsonify({"error": "El parametro date es requerido"}), 400
 
-    # Validar que el taxi exista → 404 si no
+
     taxi = Taxi.query.get(taxi_id)
     if taxi is None:
         return jsonify({"error": "Taxi no encontrado"}), 404
 
-    # Convertir la fecha de formato DD-MM-AAAA a objeto fecha
     try:
         fecha = datetime.strptime(date, "%d-%m-%Y").date()
     except ValueError:
         return jsonify({"error": "Formato de fecha invalido, use DD-MM-AAAA"}), 400
-
-    # Consultar trayectorias del taxi en esa fecha
+    
     query = Trajectory.query.filter(
         Trajectory.taxi_id == taxi_id,
         cast(Trajectory.date, Date) == fecha
@@ -73,6 +65,44 @@ def get_trajectories():
     ]
 
     return jsonify(result)
+
+@app.route("/trajectories/latest", methods=["GET"])
+def get_latest_trajectories():
+    subquery = (
+        db.session.query(
+            Trajectory.taxi_id,
+            db.func.max(Trajectory.date).label("max_date")
+        )
+        .group_by(Trajectory.taxi_id)
+        .subquery()
+    )
+
+    results = (
+        db.session.query(Taxi, Trajectory)
+        .join(Trajectory, Taxi.id == Trajectory.taxi_id)
+        .join(
+            subquery,
+            db.and_(
+                Trajectory.taxi_id == subquery.c.taxi_id,
+                Trajectory.date == subquery.c.max_date
+            )
+        )
+        .all()
+    )
+
+
+    response = [
+        {
+            "id": taxi.id,
+            "plate": taxi.plate,
+            "latitude": trajectory.latitude,
+            "longitude": trajectory.longitude,
+            "timestamp": trajectory.date.isoformat()
+        }
+        for taxi, trajectory in results
+    ]
+
+    return jsonify(response)
 
 
 if __name__ == "__main__":
