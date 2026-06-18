@@ -1,6 +1,9 @@
 from flask import Flask, jsonify, request
 from models.taxi import db, Taxi
+from models.trajectory import Trajectory
 import config
+from sqlalchemy import cast, Date
+from datetime import datetime
 
 app = Flask(__name__)
 app.config["SQLALCHEMY_DATABASE_URI"] = config.SQLALCHEMY_DATABASE_URI
@@ -29,6 +32,47 @@ def get_taxis():
     taxis = [{"id": t.id, "plate": t.plate} for t in pagination.items]
 
     return jsonify(taxis)
+
+@app.route("/trajectories", methods=["GET"])
+def get_trajectories():
+    taxi_id = request.args.get("taxiId", default=None, type=int)
+    date = request.args.get("date", default=None, type=str)
+
+    # Validación: ambos parámetros son obligatorios → 400 si falta alguno
+    if taxi_id is None:
+        return jsonify({"error": "El parametro taxiId es requerido"}), 400
+    if date is None:
+        return jsonify({"error": "El parametro date es requerido"}), 400
+
+    # Validar que el taxi exista → 404 si no
+    taxi = Taxi.query.get(taxi_id)
+    if taxi is None:
+        return jsonify({"error": "Taxi no encontrado"}), 404
+
+    # Convertir la fecha de formato DD-MM-AAAA a objeto fecha
+    try:
+        fecha = datetime.strptime(date, "%d-%m-%Y").date()
+    except ValueError:
+        return jsonify({"error": "Formato de fecha invalido, use DD-MM-AAAA"}), 400
+
+    # Consultar trayectorias del taxi en esa fecha
+    query = Trajectory.query.filter(
+        Trajectory.taxi_id == taxi_id,
+        cast(Trajectory.date, Date) == fecha
+    )
+    trajectories = query.all()
+
+    result = [
+        {
+            "id": t.id,
+            "latitude": t.latitude,
+            "longitude": t.longitude,
+            "timestamp": t.date.isoformat()
+        }
+        for t in trajectories
+    ]
+
+    return jsonify(result)
 
 
 if __name__ == "__main__":
